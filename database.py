@@ -3,7 +3,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker,relationship
 
 
 Base = declarative_base()
-engine = create_engine("sqlite:///pasosi.db")
+engine = create_engine("sqlite:///sitecalc.db")
 
 SessionLocal = sessionmaker(bind=engine)
 session = SessionLocal()
