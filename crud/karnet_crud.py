@@ -1,122 +1,102 @@
 from database import session
 from datetime import date
-from models import Karnet,Zaposleni,Gradiliste
+from models import Karnet
+from sqlalchemy import extract
 from crud.zaposleni_crud import *
+from crud.gradiliste_crud import *
+from crud.raspored_crud import *
 
-
-# 1. CRUD ZA KARNETE
-def dodaj_karnet(datum, sati, id_zaposlenog, id_gradilista):
-    radnik = pronadji_zaposlenog(id_zaposlenog)
+def dodaj_karnet(datum, id_zaposlenog, id_gradilista, prisutan, sati):
+    zaposleni = pronadji_zaposlenog(id_zaposlenog)
     gradiliste = pronadji_gradiliste(id_gradilista)
-    print("RADNIK:", radnik)
-    print("RADNIKOVO GRADILISTE:", radnik.gradiliste)
-    print("IZABRANO GRADILISTE:", gradiliste)
-    if not radnik: #proverava da li postoji ovaj radnik
-        print("Radnik nije pronadjen.")
+    if not zaposleni:
+        print("Zaposleni nije pronadjen.")
         return
-    if  not gradiliste: #proverava da li postoji ovo gradiliste
+    if not gradiliste:
         print("Gradiliste nije pronadjeno.")
         return
-    if datum>date.today():#proverava da li je uneti datum u buducnosti od danasnjeg dana
-        print ("Ne mozete uneti sate za dan (datum) u buducnosti.)")
-        return
-    if  radnik.gradiliste != gradiliste: #proverava da li je radnik rasporedjen na biranom gradilistu
+    aktivni_radnici = prikazi_aktivne_radnike_na_gradilistu(id_gradilista,datum)
+    if not aktivni_radnici:
         print("Radnik nije rasporedjen na izabranom gradilistu.")
         return
-    if session.query(Karnet).filter_by(zaposleni_id = id_zaposlenog, datum = datum).first(): #proverava da li vec postoje sati za ovog radnika
-        print("Za ovog radnika vec postoji unos za taj datum.")
-        return
-    karnet = Karnet(datum = datum, sati = sati)
-    karnet.zaposleni = radnik
-    karnet.gradiliste = gradiliste
-    print("KREIRAM KARNET")
+    karnet = Karnet(datum = datum, prisutan = prisutan, sati = sati)
     session.add(karnet)
     session.commit()
-    print("Karnet je dodat.")
+    return karnet
 
-def pronadji_karnet(id_karneta):
-    return session.query(Karnet).filter_by(id = id_karneta).first()
-
-def prikazi_sve_karnete():
-    return session.query(Karnet).all()
-
-def prikazi_karnete_jednog_radnika(id_radnika):
-    zaposleni = pronadji_zaposlenog(id_radnika)
-    if not zaposleni:
-        print("Radnik nije pronadjen.")
-        return
-    return zaposleni.karneti
-
-def prikazi_karnete_gradilista(id_gradilista):
+def prikazi_karnet_gradilista(id_gradilista,datum):
     gradiliste = pronadji_gradiliste(id_gradilista)
     if not gradiliste:
         print("Gradiliste nije pronadjeno.")
         return
-    return gradiliste.karneti
+    radnici = prikazi_aktivne_radnike_na_gradilistu(id_gradilista, datum)
+    rezultat= []
+    for radnik in radnici:
+        karnet = session.query(Karnet).filter_by(zaposleni_id = radnik.id, gradiliste_id = id_gradilista,datum = datum).first()
+        if karnet:
+            rezultat.append(karnet)
+        else:
+            rezultat.append({"radnik":radnik, "prisutan": False, "sati":0})
+    return rezultat
 
-def izmeni_karnet(id_karneta, novi_sati):
-    karnet = pronadji_karnet(id_karneta)
+def mesecni_karnet_zaposlenog(zaposleni_id, mesec,godina):
+    zaposleni = pronadji_zaposlenog(zaposleni_id)
+    if not zaposleni:
+        print("Zaposleni nije pronadjen.")
+        return
+    karneti = session.query(Karnet).filter(Karnet.zaposleni_id == zaposleni_id, extract('month', Karnet.datum)==mesec, extract('year',Karnet.datum)==godina).all()
+    return karneti
+   
+
+def promeni_karnet(id_karneta, novi_sati, prisutan):
+    karnet = session.query(Karnet).filter_by(id = id_karneta).first()
     if not karnet:
         print("Karnet nije pronadjen.")
-        return
-    if (date.today() - karnet.datum).days >5:
-        print("Ne mozete izmeniti sate za izabrani datum. Proslo je vise od 5 dana.")
         return
     karnet.sati = novi_sati
+    karnet.pristuan = prisutan
     session.commit()
+    return karnet
 
-def obrisi_karnet(id_karneta):
-    karnet = pronadji_karnet(id_karneta)
-    if not karnet:
-        print("Karnet nije pronadjen.")
-        return
-    session.delete(karnet)
-    session.commit()
+def ukupni_sati_zaposlenog_za_mesec(id_zaposlenog, mesec,godina):
+    karneti = mesecni_karnet_zaposlenog(id_zaposlenog,mesec,godina)
+    if not karneti:
+        return 0
+    ukupno = 0
+    for k in karneti:
+        ukupno += k.sati
+    return ukupno
 
-
-def obracun_plate(id_zaposlenog, mesec, godina):
-    zaposleni = pronadji_zaposlenog(id_zaposlenog)
-    if not zaposleni:
-        print("Radnik nije pronadjen.")
-        return
-    karneti_zaposlenog = zaposleni.karneti
-    if len(karneti_zaposlenog)==0:
-        print("Zaposleni nema unete sate u karnet.")
-        return
-    ukupno_sati = 0
-    for karnet in karneti_zaposlenog:
-        if (karnet.datum.year == godina and karnet.datum.month == mesec):
-            ukupno_sati += karnet.sati
-    if ukupno_sati == 0 :
-        print("Nema radnik sati za izabrani mesec.")
-        return
-    bruto_plata = ukupno_sati * zaposleni.satnica
-    izvestaj = {"zaposleni ": zaposleni.ime_prezime,
-                "mesec: ": mesec,
-                "godina ": godina,
-                "ukupno sati ":ukupno_sati,
-                "satnica ": zaposleni.satnica,
-                "plata ": bruto_plata}
-    return izvestaj 
-
-def ukupno_sati_gradilista(id_gradilista, mesec, godina):
+def ukupni_sati_gradilista_za_mesec(id_gradilista,mesec,godina):
     gradiliste = pronadji_gradiliste(id_gradilista)
     if not gradiliste:
         print("Gradiliste nije pronadjeno.")
         return
-    karneti_gradilista = gradiliste.karneti
-    if len(karneti_gradilista) == 0:
-        print("Nema unetih sati za birano gradiliste i mesec.")
-        return
-    ukupno_sati = 0
-    for karnet in karneti_gradilista:
-        if (karnet.datum.year == godina and karnet.datum.month == mesec):
-            ukupno_sati+=karnet.sati
-    if ukupno_sati == 0:
-        print("Nema unetih sati na ovom gradilistu.")
-        return
-    izvestaj = {"Gradiliste": gradiliste.naziv,
-               "sati gradilista": ukupno_sati}
-    return izvestaj
+    karneti = session.query(Karnet).filter(Karnet.gradiliste_id == id_gradilista, extract('month', Karnet.datum)==mesec, extract('year', Karnet.datum)==godina).all()
+    ukupno = 0
+    for k in karneti:
+        ukupno += k.sati
+    return ukupno
 
+def ukupno_sati_gradilista(id_gradilista):
+    gradiliste = pronadji_gradiliste(id_gradilista)
+    if not gradiliste:
+        print("Gradiliste nije pronadjeno.")
+        return
+    karneti = session.query(Karnet).filter_by(gradiliste_id = id_gradilista).all()
+    ukupno = 0
+    for k in karneti:
+        ukupno+=k.sati
+    return ukupno
 
+def prikazi_prisustvo_na_gradilistu(id_gradilista,datum):
+    gradiliste = pronadji_gradiliste(id_gradilista)
+    if not gradiliste:
+        print("Gradiliste nije pronadjeno.")
+        return
+    karneti = session.query(Karnet).filter_by(gradiliste_id = id_gradilista, datum=datum).all()
+    prisutni = []
+    for k in karneti:
+        if k.prisutan:
+            prisutni.append(k.zaposleni)
+    return prisutni
